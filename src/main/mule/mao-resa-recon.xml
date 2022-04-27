@@ -1,0 +1,160 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:bef="http://www.mulesoft.org/schema/mule/belk/bef" xmlns:batch="http://www.mulesoft.org/schema/mule/batch"
+	xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+	xmlns:db="http://www.mulesoft.org/schema/mule/db" xmlns:http="http://www.mulesoft.org/schema/mule/http" xmlns="http://www.mulesoft.org/schema/mule/core" xmlns:doc="http://www.mulesoft.org/schema/mule/documentation" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+http://www.mulesoft.org/schema/mule/db http://www.mulesoft.org/schema/mule/db/current/mule-db.xsd
+http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd
+http://www.mulesoft.org/schema/mule/batch http://www.mulesoft.org/schema/mule/batch/current/mule-batch.xsd">
+	<http:listener-config name="HTTP_Listener_config" doc:name="HTTP Listener config" doc:id="535648fb-db28-4922-a1ad-4474cea62c13" basePath="/" >
+		<http:listener-connection host="0.0.0.0" port="8087" />
+	</http:listener-config>
+	<db:config name="mysql_mao_db" doc:name="Database Config" doc:id="db17777a-4f10-48f8-9b4b-e9c257466994" >
+		<db:my-sql-connection host="10.36.196.2" port="3306" user="CHAVVSA" password="CHAVVSA#1234561abc" database="default_order" />
+	</db:config>
+	<db:config name="oracle_rms" doc:name="Database Config" doc:id="5d129acc-f9d3-4029-a988-20c3c12358c6" >
+		<db:oracle-connection host="000RMSRMDBST01.BELKINC.COM" user="rmsread" password="readonlyuser" serviceName="RMSSTG" />
+	</db:config>
+	<db:config name="Database_Config" doc:name="Database Config" doc:id="3269e39e-6430-423b-abd9-89c2f87be2ab" >
+		<db:my-sql-connection host="127.0.0.1" port="3306" user="root" password="Sasi1982" database="hb_student_tracker" />
+	</db:config>
+	<flow name="mao-resa-reconFlow" doc:id="959cb5e6-bce9-4fe8-abce-f9b21d932265" >
+		<http:listener doc:name="Listener" doc:id="fac3bc6c-17e1-479b-b97a-cf9b7972c02b" config-ref="HTTP_Listener_config" path="/recon"/>
+		<set-variable value="#[now()]" doc:name="Set Variable" doc:id="eb0b3d4c-03b7-4b96-98cf-50802eab4b6b" variableName="startTime"/>
+		<db:select doc:name="MAO DB" doc:id="f1fcce74-c4b8-44ac-b9ac-6455d00a759c" config-ref="mysql_mao_db">
+			<db:sql ><![CDATA[select distinct o.ORDER_ID,oi.INVOICE_ID from default_order.ORD_INVOICE oi
+inner join default_order.ORD_ORDER o on o.pk = oi.ORDER_PK
+where oi.PUBLISH_STATUS_ID in ('Published') 
+and oi.UPDATED_TIMESTAMP > date (sysdate()) - interval 1 day;]]></db:sql>
+		</db:select>
+		<logger level="INFO" doc:name="Logger" doc:id="a7e237f6-84c8-4dde-abab-47373e046c09" message="****** Order id outside for each  : #[payload.OrderId]"/>
+		<batch:job jobName="mao-resa-reconBatch_Job" doc:id="61447dfc-2685-423f-8721-bc57632892a3" maxFailedRecords="100">
+			<batch:process-records >
+				<batch:step name="InvoiceId_Mod_0" doc:id="0f57d74c-d939-416c-a04c-48721a88fedf" acceptExpression="#[(payload.INVOICE_ID as Number mod 2) == 0 ]">
+					<logger level="INFO" doc:name="Logger" doc:id="723fac06-2d88-4485-9ccd-eeca175bc8ea" message="******* In Batch Step ***********  Invoce ID :   #[payload.INVOICE_ID]   and Mod function #[payload.INVOICE_ID mod 2]"/>
+					<flow-ref doc:name="Flow Reference" doc:id="599fe212-8fc7-49db-9a4f-1dcccb0fdf12" name="data-from-resa-and-insert" />
+					<batch:aggregator doc:name="Batch Aggregator" doc:id="462bfb57-825b-4140-869f-ab475d1c6330" size="100" preserveMimeTypes="true">
+						<flow-ref doc:name="Flow Reference" doc:id="31ddb399-2ceb-43e9-b4d6-9b77194f73e8" name="bulk-insert"/>
+					</batch:aggregator>
+				</batch:step>
+				<batch:step name="InvoiceId_Mod_1" doc:id="7c8e84eb-b27d-430d-807e-df946a64eb93" acceptExpression="#[(payload.INVOICE_ID as Number mod 2) == 1 ]">
+					<logger level="INFO" doc:name="Logger" doc:id="e7bf8200-a354-4b35-9879-ce1e84f821c6" message="******* In Batch Step ***********  Invoce ID :   #[payload.INVOICE_ID]   and Mod function #[payload.INVOICE_ID mod 2]" />
+					<flow-ref doc:name="Flow Reference" doc:id="2998e323-9979-4111-8e1c-999d38ff3415" name="data-from-resa-and-insert"/>
+					<batch:aggregator doc:name="Batch Aggregator" doc:id="bd09afa5-0b14-4256-91b8-21220b00c795" preserveMimeTypes="true" size="100">
+						<flow-ref doc:name="Flow Reference" doc:id="393123d4-b9a3-4a40-84c4-573cde333616" name="bulk-insert"/>
+					</batch:aggregator>
+				</batch:step>
+			</batch:process-records>
+			<batch:on-complete >
+				<logger level="INFO" doc:name="Logger" doc:id="781a603e-cd34-411b-b824-5090f960739f" message="$$$$$$$$$  Time Taken to complete the process #[vars.startTime as Number - now() as Number]  "/>
+			</batch:on-complete>
+		</batch:job>
+		<set-payload value="********** Completed **** Set Payload ************" doc:name="Set Payload" doc:id="4045808d-8f2f-43eb-a1b7-7eeb227427d8" />
+		<logger level="INFO" doc:name="Logger" doc:id="09880769-ebb0-44da-ad35-36345e9edd5a" message="**********   Completed *******"/>
+	</flow>
+	<sub-flow name="data-from-resa-and-insert" doc:id="b7841acc-cc03-415d-bef1-fbe08b78cedf" >
+		<logger level="INFO" doc:name="Logger" doc:id="9752a8eb-1d37-4da4-84cb-044e8e047713" message="****** Order id  : #[payload.ORDER_ID]  ***** and Invoice Id : #[payload.INVOICE_ID]" />
+		<set-variable value="#[payload.ORDER_ID]" doc:name="Set Variable" doc:id="6e430299-2c6a-49e1-aa9a-3c54a4b38182" variableName="varOrderId" />
+		<set-variable value="#[payload.INVOICE_ID]" doc:name="Set Variable" doc:id="fb0000b7-9048-434c-8b7a-4b34c0b56568" variableName="varInvoiceId"/>
+		<db:select doc:name="RMS DB" doc:id="359093da-f302-4d7c-8336-21b6eb11fd9e" config-ref="oracle_rms">
+				<db:sql><![CDATA[Select
+h.stg_id,h.reference_no_1 as INVOICE_ID
+,nvl(i.NET_AMT,0) as NET_AMT
+,nvl(d.NET_DISCOUNT,0) as NET_DISCOUNT
+,nvl(tx.NET_TAX,0) as NET_TAX
+,nvl(td.NET_TENDER,0) as NET_TENDER
+,((i.NET_AMT - nvl(d.NET_DISCOUNT,0) + nvl(tx.NET_TAX,0)) - td.NET_TENDER) AS NET_VARIANCE
+, CASE WHEN ((nvl(i.NET_AMT,0) - nvl(d.NET_DISCOUNT,0) + nvl(tx.NET_TAX,0)) - nvl(td.NET_TENDER,0)) = 0 THEN 'PASS' ELSE 'FAIL' END as STATUS
+FROM
+BELK_TRAN_HEAD_STG_IN h
+LEFT OUTER join
+(
+SELECT
+stg_id, sum((case when quantity_sign = 'N' then -1 else 1 end)*quantity*unit_retail) as NET_AMT
+FROM BELK_TRAN_ITEM_STG_IN
+group by stg_id
+) i
+on
+h.stg_id = i.stg_id
+left outer join
+(
+SELECT stg_id, nvl(sum((case when QUANTITY_SIGN = 'N' then -1 else 1 end) * unit_discount_amount),0) as NET_DISCOUNT from belk_item_disc_stg_in group by stg_id
+)
+d
+on
+i.stg_id = d.stg_id
+and h.stg_id = d.stg_id
+left outer join
+(
+SELECT stg_id,nvl(sum(((case when igtax_amount_sign = 'N' then -1 else 1 end))*IGTAX_AMOUNT),0) as NET_TAX from BELK_ITEM_IGTAX_STG_IN group by stg_id
+)
+tx
+on
+i.stg_id = tx.stg_id
+and h.stg_id = tx.stg_id
+LEFT OUTER join
+(
+SELECT stg_id,nvl(sum((case when tender_sign = 'N' then -1 else 1 end)*tender_amount),0) as NET_TENDER from belk_tran_tend_stg_in group by stg_id
+) td
+on
+i.stg_id = td.stg_id
+and h.stg_id = td.stg_id
+where
+h.stg_id
+IN (
+select stg_id from BELK_TRAN_HEAD_STG_IN where
+customer_order_head_id =:inputPatamOrderId and reference_no_1 = :inputPatamInvoiceId
+)]]></db:sql>
+				<db:input-parameters><![CDATA[#[{
+	inputPatamOrderId : payload.ORDER_ID,
+	inputPatamInvoiceId : payload.INVOICE_ID as String
+}]]]></db:input-parameters>
+			</db:select>
+		<logger level="INFO" doc:name="Logger" doc:id="068d8ab3-96e5-448e-a866-0a6bee6e3d90" message="#[payload]" />
+		<set-payload value="#[output application/json
+var firstObj = payload[0]
+---
+{
+	ORDER_ID : vars.varOrderId,
+	INVOICE_ID : vars.varInvoiceId,
+	STG_ID : firstObj.STG_ID,
+	NET_AMT : firstObj.NET_AMT,
+	NET_DISCOUNT : firstObj.NET_DISCOUNT,
+	NET_TAX : firstObj.NET_TAX,
+	NET_TENDER : firstObj.NET_TENDER,
+	NET_VARIANCE : firstObj.NET_VARIANCE,
+	STATUS : firstObj.STATUS,
+	DATE_TIME : now()
+		
+}]" doc:name="Set Payload" doc:id="b2b6093d-4083-4b3f-ace2-41f03dec860f" />
+		<!--   <db:insert doc:name="Insert MySQL local DB" doc:id="a3f3e672-f55a-4607-b040-cdbc7115dc79" config-ref="Database_Config">
+				<db:sql><![CDATA[insert INTO mao_resa_recon values (:ORDER_ID,:INVOICE_ID,:STG_ID,:NET_AMT,:NET_DISCOUNT,:NET_TAX,:NET_TENDER,:NET_VARIANCE,:STATUS,"")]]></db:sql>
+				<db:input-parameters><![CDATA[#[output application/json
+var firstObj = payload[0]
+-&#45;&#45;
+{
+	ORDER_ID : vars.varOrderId,
+	INVOICE_ID : vars.varInvoiceId,
+	STG_ID : firstObj.STG_ID,
+	NET_AMT : firstObj.NET_AMT,
+	NET_DISCOUNT : firstObj.NET_DISCOUNT,
+	NET_TAX : firstObj.NET_TAX,
+	NET_TENDER : firstObj.NET_TENDER,
+	NET_VARIANCE : firstObj.NET_VARIANCE,
+	STATUS : firstObj.STATUS,
+	DATE_TIME : now()
+		
+}]]]></db:input-parameters>
+			</db:insert> -->
+	</sub-flow>
+	<sub-flow name="bulk-insert" doc:id="614bd438-8336-4ce2-b7a9-7ae0c1f8ca58" >
+		<logger level="INFO" doc:name="Logger" doc:id="569877dd-1939-4fed-bd29-506b1a65f2ea" message="************ $$$$$$$$$$$$$$$$$$   In bulk update  ********************$$$$$$$$$$$$$$$$$$$$ "/>
+		<db:bulk-insert doc:name="Bulk insert" doc:id="ae7fb404-f5f4-43c3-b867-c306c5ed9041" config-ref="Database_Config">
+			<db:bulk-input-parameters ><![CDATA[#[output application/json
+---
+payload]]]></db:bulk-input-parameters>
+			<db:sql ><![CDATA[insert INTO mao_resa_recon values (:ORDER_ID,:INVOICE_ID,:STG_ID,:NET_AMT,:NET_DISCOUNT,:NET_TAX,:NET_TENDER,:NET_VARIANCE,:STATUS,"")]]></db:sql>
+		</db:bulk-insert>
+	</sub-flow>
+</mule>
